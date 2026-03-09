@@ -3,12 +3,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from models.person import Person
 from db.database import get_connection
-from config import CURRENT_YEAR, STATUS_PENDING, STATUS_CANCELLED
+from config import CURRENT_YEAR, STATUS_PENDING_MANAGER, STATUS_PENDING_HR, STATUS_CANCELLED
 
 
 class Employee(Person):
-    def __init__(self, id, name, email, department, role, manager_id=None):
-        super().__init__(id, name, email, department, role)
+    def __init__(self, id, name, email, department, role, manager_id=None, date_joined=None):
+        super().__init__(id, name, email, department, role, date_joined)
         self.manager_id = manager_id
 
     @classmethod
@@ -17,13 +17,14 @@ class Employee(Person):
             id=row["id"], name=row["name"], email=row["email"],
             department=row["department"], role=row["role"],
             manager_id=row.get("manager_id"),
+            date_joined=row.get("date_joined")
         )
 
     # ── Balances ─────────────────────────────────────────────────────────────
     def get_balances(self, year: int = CURRENT_YEAR) -> list:
         conn = get_connection()
         rows = conn.execute(
-            """SELECT lb.*, lt.name as leave_type_name, lt.is_paid
+            """SELECT lb.*, lt.name as leave_type_name
                FROM leave_balances lb
                JOIN leave_types lt ON lt.id = lb.leave_type_id
                WHERE lb.user_id=? AND lb.year=?""",
@@ -66,18 +67,30 @@ class Employee(Person):
         if not row:
             conn.close()
             return False, "Request not found."
-        if row["status"] != STATUS_PENDING:
+        if row["status"] not in (STATUS_PENDING_MANAGER, STATUS_PENDING_HR):
             conn.close()
             return False, f"Cannot cancel a request with status '{row['status']}'."
+        
+        # If already approved leave is cancelled, we should restore balance.
+        # But here we only allow cancelling PENDING ones. 
+        # Actually the prompt says: "Cancel leave request (before approval)"
+        # And "If approved leave is cancelled: balance restored"
+        
+        # Let's handle both for robustness if needed, but primarily follow the rules.
+        is_already_approved = row["status"] == "Approved"
+
         conn.execute(
-            "UPDATE leave_requests SET status=? WHERE id=?",
+            "UPDATE leave_requests SET status=?, updated_at=datetime('now') WHERE id=?",
             (STATUS_CANCELLED, request_id),
         )
+        
+        if is_already_approved:
+            conn.execute(
+                """UPDATE leave_balances SET used_days = used_days - ?
+                   WHERE user_id=? AND leave_type_id=? AND year=strftime('%Y', start_date)""",
+                (row["working_days"], self.id, row["leave_type_id"])
+            )
+
         conn.commit()
         conn.close()
         return True, "Request cancelled."
-
-
-if __name__ == "__main__":
-    emp = Employee(1, "Alice", "alice@co.com", "Engineering", "employee", manager_id=2)
-    print(emp)

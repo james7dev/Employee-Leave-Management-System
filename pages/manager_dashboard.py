@@ -5,8 +5,11 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from models.manager import Manager
-from services.leave_service import get_pending_requests_for_manager, get_team_calendar
-from config import STATUS_APPROVED
+from services.leave_service import (
+    get_pending_requests_for_manager, get_team_calendar, 
+    get_request_approvals, get_request_documents
+)
+from config import STATUS_APPROVED, STATUS_PENDING_MANAGER, STATUS_MORE_INFO_REQUIRED
 
 
 def show(user: dict):
@@ -15,7 +18,7 @@ def show(user: dict):
     st.caption(f"{user['name']}  ·  {user['department']}")
     st.divider()
 
-    tab1, tab2, tab3 = st.tabs(["⏳ Pending Requests", "✅ Approved Leave", "📅 Team Calendar"])
+    tab1, tab2, tab3 = st.tabs(["⏳ Pending Requests", "✅ Team History", "📅 Team Calendar"])
 
     # ── Tab 1: Pending ────────────────────────────────────────────────────────
     with tab1:
@@ -30,9 +33,11 @@ def show(user: dict):
                     r["start_date"], r["end_date"], exclude_employee_id=r["employee_id"]
                 )
 
+                status_label = "Info Required" if r["status"] == STATUS_MORE_INFO_REQUIRED else "Pending"
+
                 with st.expander(
                     f"👤 {r['employee_name']} — {r['leave_type_name']}  |  "
-                    f"{r['start_date']} → {r['end_date']}  |  {r['working_days']:.1f} days"
+                    f"{r['start_date']} → {r['end_date']}  |  {r['working_days']:.1f} days ({status_label})"
                 ):
                     col1, col2, col3 = st.columns(3)
                     col1.metric("Employee",    r["employee_name"])
@@ -46,29 +51,44 @@ def show(user: dict):
                     if r["reason"]:
                         st.caption(f"📝 Reason: {r['reason']}")
                     
-                    if r.get("attachment_path"):
-                        try:
-                            with open(r["attachment_path"], "rb") as f:
-                                st.download_button(
-                                    "📎 View Attachment",
-                                    f,
-                                    file_name=os.path.basename(r["attachment_path"]),
-                                    key=f"dl_mgr_{r['id']}"
-                                )
-                        except FileNotFoundError:
-                            st.error("Attachment file not found.")
+                    # Documents
+                    docs = get_request_documents(r["id"])
+                    if docs:
+                        for d in docs:
+                            try:
+                                with open(d["file_path"], "rb") as f:
+                                    st.download_button(
+                                        f"📎 View {os.path.basename(d['file_path'])}",
+                                        f,
+                                        file_name=os.path.basename(d['file_path']),
+                                        key=f"dl_mgr_{r['id']}_{d['id']}"
+                                    )
+                            except FileNotFoundError:
+                                st.error("Attachment file not found.")
 
                     if conflicts:
                         names = ", ".join(c["name"] for c in conflicts)
                         st.warning(f"⚠️ Conflict: **{names}** also has approved leave in this period.")
 
+                    # History / Approvals
+                    approvals = get_request_approvals(r["id"])
+                    if approvals:
+                        st.markdown("---")
+                        st.markdown("**Approval History:**")
+                        for a in approvals:
+                            action_label = a["action"].replace("_", " ")
+                            st.write(f"**{a['timestamp'][:16]}** — {a['role'].title()} ({a['approver_name']}): {action_label}")
+                            if a["comment"]:
+                                st.info(f"💬 {a['comment']}")
+
                     st.markdown("---")
                     note = st.text_input(
-                        "Note (required for rejection)",
+                        "Comment / Note",
                         key=f"note_{r['id']}",
-                        placeholder="Add a note for the employee...",
+                        placeholder="Add a note...",
                     )
-                    col_a, col_b, _ = st.columns([1, 1, 2])
+                    
+                    col_a, col_b, col_c, _ = st.columns([1, 1, 1, 2])
                     with col_a:
                         if st.button("✅ Approve", key=f"approve_{r['id']}", type="primary"):
                             ok, msg = mgr.approve_request(r["id"], note)
@@ -85,29 +105,33 @@ def show(user: dict):
                                 st.rerun()
                             else:
                                 st.error(msg)
+                    with col_c:
+                        if st.button("ℹ️ Info", key=f"info_{r['id']}"):
+                            ok, msg = mgr.request_more_info(r["id"], note)
+                            if ok:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
 
-    # ── Tab 2: Approved ───────────────────────────────────────────────────────
+    # ── Tab 2: Approved / All ────────────────────────────────────────────────
     with tab2:
-        approved = mgr.get_team_requests(status=STATUS_APPROVED)
-        if not approved:
-            st.info("No approved leave records yet.")
+        st.markdown("### Team Leave Requests")
+        history = mgr.get_team_requests()
+        if not history:
+            st.info("No leave records for your team.")
         else:
-            for r in approved:
-                with st.expander(f"👤 {r['employee_name']} — {r['leave_type_name']} | {r['start_date']} → {r['end_date']}"):
+            for r in history:
+                with st.expander(f"👤 {r['employee_name']} — {r['leave_type_name']} | {r['start_date']} → {r['end_date']} | {r['status']}"):
                     st.write(f"**Days:** {r['working_days']:.1f}")
                     if r['reason']: st.write(f"**Reason:** {r['reason']}")
-                    if r['manager_note']: st.write(f"**Note:** {r['manager_note']}")
-                    if r.get("attachment_path"):
-                        try:
-                            with open(r["attachment_path"], "rb") as f:
-                                st.download_button(
-                                    "📎 View Attachment",
-                                    f,
-                                    file_name=os.path.basename(r["attachment_path"]),
-                                    key=f"dl_mgr_appr_{r['id']}"
-                                )
-                        except FileNotFoundError:
-                            st.error("Attachment file not found.")
+                    
+                    approvals = get_request_approvals(r["id"])
+                    for a in approvals:
+                        action_label = a["action"].replace("_", " ")
+                        st.write(f"**{a['role'].title()} ({a['approver_name']}):** {action_label}")
+                        if a["comment"]:
+                            st.info(f"💬 {a['comment']}")
 
     # ── Tab 3: Team Calendar ──────────────────────────────────────────────────
     with tab3:

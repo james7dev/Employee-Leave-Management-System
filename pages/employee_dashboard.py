@@ -5,24 +5,34 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.leave_service import (
-    get_leave_types, submit_leave, get_employee_requests, check_conflict
+    get_leave_types, submit_leave, get_employee_requests, check_conflict,
+    get_request_approvals, get_request_documents
 )
 from models.employee import Employee
-from config import STATUS_PENDING, STATUS_APPROVED, STATUS_REJECTED, STATUS_CANCELLED
+from config import (
+    STATUS_DRAFT, STATUS_PENDING_MANAGER, STATUS_PENDING_HR, 
+    STATUS_APPROVED, STATUS_REJECTED, STATUS_CANCELLED, STATUS_MORE_INFO_REQUIRED
+)
 
 
 STATUS_EMOJI = {
-    STATUS_PENDING:   "🟡 Pending",
-    STATUS_APPROVED:  "🟢 Approved",
-    STATUS_REJECTED:  "🔴 Rejected",
-    STATUS_CANCELLED: "⚫ Cancelled",
+    STATUS_DRAFT:               "📝 Draft",
+    STATUS_PENDING_MANAGER:     "🟡 Pending Manager",
+    STATUS_PENDING_HR:          "🔵 Pending HR",
+    STATUS_APPROVED:            "🟢 Approved",
+    STATUS_REJECTED:            "🔴 Rejected",
+    STATUS_CANCELLED:           "⚫ Cancelled",
+    STATUS_MORE_INFO_REQUIRED:  "🟠 Info Required",
 }
 
 STATUS_COLOR = {
-    STATUS_PENDING:   "#FEF3C7",
-    STATUS_APPROVED:  "#D1FAE5",
-    STATUS_REJECTED:  "#FEE2E2",
-    STATUS_CANCELLED: "#F3F4F6",
+    STATUS_DRAFT:               "#F3F4F6",
+    STATUS_PENDING_MANAGER:     "#FEF3C7",
+    STATUS_PENDING_HR:          "#DBEAFE",
+    STATUS_APPROVED:            "#D1FAE5",
+    STATUS_REJECTED:            "#FEE2E2",
+    STATUS_CANCELLED:           "#F3F4F6",
+    STATUS_MORE_INFO_REQUIRED:  "#FFEDD5",
 }
 
 
@@ -30,7 +40,7 @@ def show(user: dict):
     emp = Employee.from_row(user)
 
     st.markdown(f"## 👋 Hello, {user['name'].split()[0]}!")
-    st.caption(f"{user['department']}  ·  {user['role'].title()}")
+    st.caption(f"{user['department']}  ·  {user['role'].title()}  ·  Joined: {user.get('date_joined', '—')}")
     st.divider()
 
     tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "✉️ Submit Leave", "📋 My Requests"])
@@ -45,7 +55,7 @@ def show(user: dict):
             cols = st.columns(min(len(balances), 3))
             for i, b in enumerate(balances):
                 remaining = b["total_days"] - b["used_days"]
-                pct = remaining / b["total_days"] if b["total_days"] else 0
+                pct = remaining / b["total_days"] if b["total_days"] > 0 else 0
                 color = "#10B981" if pct > 0.5 else ("#F59E0B" if pct > 0.2 else "#EF4444")
                 with cols[i % 3]:
                     st.markdown(f"""
@@ -105,11 +115,10 @@ def show(user: dict):
         
         lt = lt_map[lt_name]
         attachment_path = None
-        if lt.get("requires_docs"):
-            uploaded_file = st.file_uploader("Upload Supporting Document", type=["pdf", "jpg", "png"])
+        if lt.get("requires_document"):
+            st.info(f"📎 **{lt_name}** requires a supporting document.")
+            uploaded_file = st.file_uploader("Upload Supporting Document", type=["pdf", "jpg", "png"], key="doc_uploader")
             if uploaded_file:
-                # In a real app, we'd save this to a persistent storage
-                # For this demo, we'll just save it to an 'uploads' directory
                 if not os.path.exists("uploads"):
                     os.makedirs("uploads")
                 safe_name = os.path.basename(uploaded_file.name)
@@ -118,7 +127,7 @@ def show(user: dict):
                     f.write(uploaded_file.getbuffer())
 
         if st.button("Submit Request", type="primary"):
-            if lt.get("requires_docs") and not attachment_path:
+            if lt.get("requires_document") and not attachment_path:
                 st.error("❌ Supporting document is required for this leave type.")
             else:
                 start = start_date.strftime("%Y-%m-%d")
@@ -157,18 +166,33 @@ def show(user: dict):
 
                 if r["reason"]:
                     st.caption(f"📝 Reason: {r['reason']}")
-                if r.get("attachment_path"):
-                    with open(r["attachment_path"], "rb") as f:
-                        st.download_button(
-                            "view Attachment",
-                            f,
-                            file_name=os.path.basename(r["attachment_path"]),
-                            key=f"dl_{r['id']}"
-                        )
-                if r["manager_note"]:
-                    st.info(f"💬 Manager note: {r['manager_note']}")
+                
+                # Documents
+                docs = get_request_documents(r["id"])
+                for d in docs:
+                    try:
+                        with open(d["file_path"], "rb") as f:
+                            st.download_button(
+                                f"📎 View {os.path.basename(d['file_path'])}",
+                                f,
+                                file_name=os.path.basename(d['file_path']),
+                                key=f"dl_{r['id']}_{d['id']}"
+                            )
+                    except FileNotFoundError:
+                        st.error(f"File not found: {d['file_path']}")
 
-                if r["status"] == STATUS_PENDING:
+                # History / Approvals
+                approvals = get_request_approvals(r["id"])
+                if approvals:
+                    st.markdown("---")
+                    st.markdown("**Approval History:**")
+                    for a in approvals:
+                        action_label = a["action"].replace("_", " ")
+                        st.write(f"**{a['timestamp'][:16]}** — {a['role'].title()} ({a['approver_name']}): {action_label}")
+                        if a["comment"]:
+                            st.info(f"💬 {a['comment']}")
+
+                if r["status"] in (STATUS_PENDING_MANAGER, STATUS_PENDING_HR, STATUS_MORE_INFO_REQUIRED):
                     if st.button("Cancel Request", key=f"cancel_{r['id']}"):
                         ok, msg = emp.cancel_request(r["id"])
                         if ok:

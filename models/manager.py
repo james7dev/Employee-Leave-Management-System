@@ -3,7 +3,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from models.employee import Employee
 from db.database import get_connection
-from config import STATUS_APPROVED, STATUS_REJECTED, STATUS_PENDING, CURRENT_YEAR
+from config import (
+    STATUS_APPROVED, STATUS_REJECTED, STATUS_PENDING_MANAGER, 
+    STATUS_PENDING_HR, STATUS_MORE_INFO_REQUIRED, CURRENT_YEAR
+)
 from utils.notifications import send_notification
 
 
@@ -39,37 +42,55 @@ class Manager(Employee):
     def approve_request(self, request_id: int, note: str = "") -> tuple:
         conn = get_connection()
         row = conn.execute(
-            """SELECT lr.*, u.manager_id FROM leave_requests lr
+            """SELECT lr.*, u.manager_id, lt.requires_hr FROM leave_requests lr
                JOIN users u ON u.id = lr.employee_id
+               JOIN leave_types lt ON lt.id = lr.leave_type_id
                WHERE lr.id=? AND u.manager_id=?""",
             (request_id, self.id),
         ).fetchone()
+        
         if not row:
             conn.close()
             return False, "Request not found or not in your team."
-        if row["status"] != STATUS_PENDING:
+        if row["status"] != STATUS_PENDING_MANAGER:
             conn.close()
             return False, f"Request is already '{row['status']}'."
 
-        # Deduct balance
+        if row["requires_hr"]:
+            new_status = STATUS_PENDING_HR
+            msg = "Request forwarded to HR."
+        else:
+            new_status = STATUS_APPROVED
+            msg = "Request approved."
+            # Deduct balance only when fully approved
+            conn.execute(
+                """UPDATE leave_balances
+                   SET used_days = used_days + ?
+                   WHERE user_id=? AND leave_type_id=? AND year=strftime('%Y', ?)""",
+                (row["working_days"], row["employee_id"], row["leave_type_id"], row["start_date"]),
+            )
+
         conn.execute(
-            """UPDATE leave_balances
-               SET used_days = used_days + ?
-               WHERE user_id=? AND leave_type_id=? AND year=strftime('%Y', 'now')""",
-            (row["working_days"], row["employee_id"], row["leave_type_id"]),
+            """UPDATE leave_requests SET status=?, manager_id=?,
+               updated_at=datetime('now') WHERE id=?""",
+            (new_status, self.id, request_id),
         )
+        
+        # Log approval action
         conn.execute(
-            """UPDATE leave_requests SET status=?, manager_note=?,
-               actioned_at=datetime('now') WHERE id=?""",
-            (STATUS_APPROVED, note, request_id),
+            """INSERT INTO leave_approvals (leave_request_id, approver_id, role, action, comment)
+               VALUES (?,?,?,?,?)""",
+            (request_id, self.id, "manager", "APPROVED" if not row["requires_hr"] else "FORWARDED", note)
         )
+
         conn.commit()
         conn.close()
+        
         send_notification(
             row["employee_id"],
-            f"✅ Your leave request ({row['start_date']} → {row['end_date']}) was approved.",
+            f"📋 Your leave request ({row['start_date']} → {row['end_date']}) status updated to: {new_status}.",
         )
-        return True, "Request approved."
+        return True, msg
 
     def reject_request(self, request_id: int, note: str) -> tuple:
         if not note or not note.strip():
@@ -84,21 +105,62 @@ class Manager(Employee):
         if not row:
             conn.close()
             return False, "Request not found or not in your team."
-        if row["status"] != STATUS_PENDING:
+        if row["status"] != STATUS_PENDING_MANAGER:
             conn.close()
             return False, f"Request is already '{row['status']}'."
+        
         conn.execute(
-            """UPDATE leave_requests SET status=?, manager_note=?,
-               actioned_at=datetime('now') WHERE id=?""",
-            (STATUS_REJECTED, note, request_id),
+            """UPDATE leave_requests SET status=?, manager_id=?,
+               updated_at=datetime('now') WHERE id=?""",
+            (STATUS_REJECTED, self.id, request_id),
         )
+        
+        conn.execute(
+            """INSERT INTO leave_approvals (leave_request_id, approver_id, role, action, comment)
+               VALUES (?,?,?,?,?)""",
+            (request_id, self.id, "manager", "REJECTED", note)
+        )
+        
         conn.commit()
         conn.close()
         send_notification(
             row["employee_id"],
-            f"❌ Your leave request ({row['start_date']} → {row['end_date']}) was rejected. Note: {note}",
+            f"❌ Your leave request ({row['start_date']} → {row['end_date']}) was rejected by manager. Note: {note}",
         )
         return True, "Request rejected."
+
+    def request_more_info(self, request_id: int, note: str) -> tuple:
+        if not note or not note.strip():
+            return False, "A comment is required to request more info."
+        conn = get_connection()
+        row = conn.execute(
+            """SELECT lr.*, u.manager_id FROM leave_requests lr
+               JOIN users u ON u.id = lr.employee_id
+               WHERE lr.id=? AND u.manager_id=?""",
+            (request_id, self.id),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return False, "Request not found or not in your team."
+        
+        conn.execute(
+            """UPDATE leave_requests SET status=?, updated_at=datetime('now') WHERE id=?""",
+            (STATUS_MORE_INFO_REQUIRED, request_id),
+        )
+        
+        conn.execute(
+            """INSERT INTO leave_approvals (leave_request_id, approver_id, role, action, comment)
+               VALUES (?,?,?,?,?)""",
+            (request_id, self.id, "manager", "REQUEST_INFO", note)
+        )
+        
+        conn.commit()
+        conn.close()
+        send_notification(
+            row["employee_id"],
+            f"ℹ️ More information required for your leave request ({row['start_date']}). Note: {note}",
+        )
+        return True, "More info requested."
 
     def check_team_conflict(self, start_date: str, end_date: str, exclude_employee_id: int = None) -> list:
         conn = get_connection()
@@ -116,8 +178,3 @@ class Manager(Employee):
         rows = conn.execute(query, params).fetchall()
         conn.close()
         return [dict(r) for r in rows]
-
-
-if __name__ == "__main__":
-    m = Manager(2, "Bob", "bob@co.com", "Engineering", "manager")
-    print(m)

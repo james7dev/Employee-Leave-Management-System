@@ -1,23 +1,29 @@
 class LeaveType:
-    def __init__(self, id: int, name: str, max_days_per_year: int,
-                 requires_approval: bool, requires_docs: bool, is_paid: bool):
-        self.id                 = id
-        self.name               = name
-        self.max_days_per_year  = max_days_per_year
-        self.requires_approval  = requires_approval
-        self.requires_docs      = requires_docs
-        self.is_paid            = is_paid
+    def __init__(self, id: int, name: str, annual_quota: int,
+                 requires_hr: bool, requires_document: bool, 
+                 max_consecutive_days: int, notice_period_days: int,
+                 carry_forward_allowed: bool):
+        self.id                     = id
+        self.name                   = name
+        self.annual_quota           = annual_quota
+        self.requires_hr            = requires_hr
+        self.requires_document      = requires_document
+        self.max_consecutive_days   = max_consecutive_days
+        self.notice_period_days     = notice_period_days
+        self.carry_forward_allowed  = carry_forward_allowed
 
     def __repr__(self):
-        return f"<LeaveType id={self.id} name='{self.name}' max={self.max_days_per_year}>"
+        return f"<LeaveType id={self.id} name='{self.name}' quota={self.annual_quota}>"
 
     @classmethod
     def from_row(cls, row):
         return cls(
             id=row["id"],
             name=row["name"],
-            max_days_per_year=row["max_days_per_year"],
-            requires_approval=bool(row["requires_approval"]),
-            requires_docs=bool(row["requires_docs"]),
-            is_paid=bool(row["is_paid"]),
+            annual_quota=row["annual_quota"],
+            requires_hr=bool(row["requires_hr"]),
+            requires_document=bool(row["requires_document"]),
+            max_consecutive_days=row["max_consecutive_days"],
+            notice_period_days=row["notice_period_days"],
+            carry_forward_allowed=bool(row["carry_forward_allowed"])
         )

@@ -3,20 +3,23 @@ CREATE TABLE IF NOT EXISTS users (
     name        TEXT    NOT NULL,
     email       TEXT    UNIQUE NOT NULL,
     password    TEXT    NOT NULL,
-    role        TEXT    NOT NULL CHECK(role IN ('employee','manager','hr')),
+    role        TEXT    NOT NULL CHECK(role IN ('employee','manager','hr','admin')),
     department  TEXT    NOT NULL,
     manager_id  INTEGER REFERENCES users(id),
     is_active   INTEGER NOT NULL DEFAULT 1,
+    date_joined TEXT    DEFAULT (date('now')),
     created_at  TEXT    DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS leave_types (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    name                TEXT    UNIQUE NOT NULL,
-    max_days_per_year   INTEGER NOT NULL,
-    requires_approval   INTEGER NOT NULL DEFAULT 1,
-    requires_docs       INTEGER NOT NULL DEFAULT 0,
-    is_paid             INTEGER NOT NULL DEFAULT 1
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                    TEXT    UNIQUE NOT NULL,
+    annual_quota            INTEGER NOT NULL,
+    requires_hr             INTEGER NOT NULL DEFAULT 0,
+    requires_document       INTEGER NOT NULL DEFAULT 0,
+    max_consecutive_days    INTEGER,
+    notice_period_days      INTEGER NOT NULL DEFAULT 0,
+    carry_forward_allowed   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS leave_balances (
@@ -37,13 +40,29 @@ CREATE TABLE IF NOT EXISTS leave_requests (
     end_date        TEXT    NOT NULL,
     working_days    REAL    NOT NULL,
     is_half_day     INTEGER NOT NULL DEFAULT 0,
-    status          TEXT    NOT NULL DEFAULT 'Pending'
-                    CHECK(status IN ('Pending','Approved','Rejected','Cancelled')),
     reason          TEXT,
-    attachment_path TEXT,
-    manager_note    TEXT,
+    status          TEXT    NOT NULL DEFAULT 'Pending Manager',
+    manager_id      INTEGER REFERENCES users(id),
+    hr_id           INTEGER REFERENCES users(id),
     submitted_at    TEXT    DEFAULT (datetime('now')),
-    actioned_at     TEXT
+    updated_at      TEXT    DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS leave_approvals (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    leave_request_id    INTEGER NOT NULL REFERENCES leave_requests(id),
+    approver_id         INTEGER NOT NULL REFERENCES users(id),
+    role                TEXT    NOT NULL,
+    action              TEXT    NOT NULL,
+    comment             TEXT,
+    timestamp           TEXT    DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS leave_documents (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    leave_request_id    INTEGER NOT NULL REFERENCES leave_requests(id),
+    file_path           TEXT    NOT NULL,
+    uploaded_at         TEXT    DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS notifications (
@@ -58,4 +77,12 @@ CREATE TABLE IF NOT EXISTS public_holidays (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     date    TEXT UNIQUE NOT NULL,
     name    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER REFERENCES users(id),
+    action      TEXT    NOT NULL,
+    target_id   INTEGER,
+    timestamp   TEXT    DEFAULT (datetime('now'))
 );

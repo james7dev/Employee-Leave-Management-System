@@ -1,97 +1,112 @@
 """
-CLI integration test — run with:  python test_flow.py
-Tests the full flow: seed → employee submit → manager approve → balance deducted
+CLI integration test — Updated for new Leave Flow
+Tests: 
+1. Employee submits Annual Leave (no HR required) -> Manager approves -> Balance deducted
+2. Employee submits Maternity Leave (HR required) -> Manager forwards -> HR approves -> Balance deducted
+3. Employee submits Casual Leave with short notice -> Should fail
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 
-from db.database import init_db, provision_balances_for_user
-from services.auth_service import login, hash_password
+from db.database import init_db
+from services.auth_service import login
 from services.leave_service import submit_leave, get_employee_requests
 from models.employee import Employee
 from models.manager import Manager
 from models.hr_admin import HRAdmin
 from db.database import get_connection
-
-print("=" * 60)
-print("LeaveFlow — Integration Test")
-print("=" * 60)
-
-# 1. Init DB
-print("\n[1] Initialising database...")
-init_db()
-print("    ✓ DB initialised")
-
-# 2. Login as HR, create test users
-print("\n[2] Creating test users via HRAdmin...")
-hr_user = login("hr@company.com", "admin123")
-assert hr_user, "HR login failed — check seed_data()"
-hr = HRAdmin.from_row(hr_user)
-
-ok, mgr_id = hr.create_user("Test Manager", "mgr@test.com", "pass123",
-                              "manager", "Engineering")
-if not ok:
-    conn = get_connection()
-    mgr_id = conn.execute("SELECT id FROM users WHERE email='mgr@test.com'").fetchone()["id"]
-    conn.close()
-print(f"    Manager ID: {mgr_id}")
-
-ok, emp_id = hr.create_user("Test Employee", "emp@test.com", "pass123",
-                              "employee", "Engineering", manager_id=mgr_id)
-if not ok:
-    conn = get_connection()
-    emp_id = conn.execute("SELECT id FROM users WHERE email='emp@test.com'").fetchone()["id"]
-    conn.close()
-print(f"    Employee ID: {emp_id}")
-
-# 3. Employee submits leave
-print("\n[3] Employee submitting Annual Leave request...")
-emp_user = login("emp@test.com", "pass123")
-assert emp_user, "Employee login failed"
-emp = Employee.from_row(emp_user)
-
 from datetime import date, timedelta
-today      = date.today()
-start      = (today + timedelta(days=3)).strftime("%Y-%m-%d")
-end        = (today + timedelta(days=7)).strftime("%Y-%m-%d")
+from config import STATUS_APPROVED, STATUS_PENDING_HR, STATUS_PENDING_MANAGER
 
-conn = get_connection()
-lt  = conn.execute("SELECT id FROM leave_types WHERE name='Annual Leave'").fetchone()
-conn.close()
+def run_test():
+    print("=" * 60)
+    print("LeaveFlow — Expanded Integration Test")
+    print("=" * 60)
 
-ok, result = submit_leave(emp.id, lt["id"], start, end, "Vacation trip")
-assert ok, f"Submit failed: {result}"
-request_id = result
-print(f"    ✓ Request submitted (ID: {request_id}, {start} → {end})")
+    # 1. Init DB
+    print("\n[1] Initialising database...")
+    init_db()
+    print("    ✓ DB initialised")
 
-# 4. Check balance before approval
-bal_before = emp.get_balance(lt["id"])
-print(f"\n[4] Balance before approval: {bal_before} days")
+    # 2. Setup users
+    print("\n[2] Setting up test users...")
+    hr_user = login("hr@company.com", "admin123")
+    hr = HRAdmin.from_row(hr_user)
 
-# 5. Manager approves
-print("\n[5] Manager approving request...")
-mgr_user = login("mgr@test.com", "pass123")
-assert mgr_user, "Manager login failed"
-mgr = Manager.from_row(mgr_user)
+    ok, mgr_id = hr.create_user("Test Manager", "mgr@test.com", "pass123", "manager", "Engineering")
+    ok, emp_id = hr.create_user("Test Employee", "emp@test.com", "pass123", "employee", "Engineering", manager_id=mgr_id)
+    print(f"    ✓ Manager ID: {mgr_id}, Employee ID: {emp_id}")
 
-ok, msg = mgr.approve_request(request_id, "Approved — enjoy!")
-assert ok, f"Approve failed: {msg}"
-print(f"    ✓ {msg}")
+    # 3. Test 1: Annual Leave (No HR)
+    print("\n[3] Test 1: Annual Leave (Manager Approval Only)")
+    emp = Employee.from_row(login("emp@test.com", "pass123"))
+    conn = get_connection()
+    lt_annual = conn.execute("SELECT id FROM leave_types WHERE name='Annual Leave'").fetchone()
+    conn.close()
 
-# 6. Check balance after approval
-emp_user = login("emp@test.com", "pass123")
-emp2 = Employee.from_row(emp_user)
-bal_after = emp2.get_balance(lt["id"])
-print(f"\n[6] Balance after approval: {bal_after} days")
-assert bal_after < bal_before, "Balance was NOT deducted after approval!"
-print(f"    ✓ Balance deducted by {bal_before - bal_after:.1f} days")
+    start = (date.today() + timedelta(days=10)).strftime("%Y-%m-%d")
+    end = (date.today() + timedelta(days=12)).strftime("%Y-%m-%d")
+    
+    bal_before = emp.get_balance(lt_annual["id"])
+    ok, req_id = submit_leave(emp.id, lt_annual["id"], start, end, "Short trip")
+    assert ok, f"Submit failed: {req_id}"
+    
+    mgr = Manager.from_row(login("mgr@test.com", "pass123"))
+    ok, msg = mgr.approve_request(req_id, "Approved by mgr")
+    assert ok, f"Approve failed: {msg}"
+    assert "approved" in msg.lower()
 
-# 7. Verify request status
-reqs = get_employee_requests(emp.id)
-req  = next(r for r in reqs if r["id"] == request_id)
-assert req["status"] == "Approved", f"Expected Approved, got {req['status']}"
-print(f"\n[7] ✓ Request status: {req['status']}")
+    bal_after = emp.get_balance(lt_annual["id"])
+    assert bal_after < bal_before, "Balance not deducted"
+    print(f"    ✓ Success: Balance deducted from {bal_before} to {bal_after}")
 
-print("\n" + "=" * 60)
-print("✅ All tests passed!")
-print("=" * 60)
+    # 4. Test 2: Maternity Leave (Requires HR)
+    print("\n[4] Test 2: Maternity Leave (Manager -> HR)")
+    conn = get_connection()
+    lt_mat = conn.execute("SELECT id FROM leave_types WHERE name='Maternity Leave'").fetchone()
+    conn.close()
+
+    # Maternity requires 30 days notice
+    start_mat = (date.today() + timedelta(days=40)).strftime("%Y-%m-%d")
+    end_mat = (date.today() + timedelta(days=50)).strftime("%Y-%m-%d")
+    
+    ok, req_id_mat = submit_leave(emp.id, lt_mat["id"], start_mat, end_mat, "Maternity")
+    assert ok, f"Submit failed: {req_id_mat}"
+
+    # Manager approves -> should go to PENDING HR
+    ok, msg = mgr.approve_request(req_id_mat, "Mgr ok")
+    assert ok, f"Mgr forward failed: {msg}"
+    assert "forwarded" in msg.lower()
+    
+    reqs = get_employee_requests(emp.id)
+    req = next(r for r in reqs if r["id"] == req_id_mat)
+    assert req["status"] == STATUS_PENDING_HR, f"Expected {STATUS_PENDING_HR}, got {req['status']}"
+    print("    ✓ Status correctly moved to Pending HR")
+
+    # HR final approves
+    ok, msg = hr.approve_request(req_id_mat, "HR final ok")
+    assert ok, f"HR approve failed: {msg}"
+    
+    reqs = get_employee_requests(emp.id)
+    req = next(r for r in reqs if r["id"] == req_id_mat)
+    assert req["status"] == STATUS_APPROVED, f"Expected {STATUS_APPROVED}, got {req['status']}"
+    print("    ✓ Status correctly moved to Approved by HR")
+
+    # 5. Test 3: Notice Period Validation
+    print("\n[5] Test 3: Notice Period Validation")
+    conn = get_connection()
+    lt_casual = conn.execute("SELECT id FROM leave_types WHERE name='Casual Leave'").fetchone()
+    conn.close()
+    
+    # Casual leave requires 1 day notice. Try same day.
+    today_str = date.today().strftime("%Y-%m-%d")
+    ok, err = submit_leave(emp.id, lt_casual["id"], today_str, today_str, "Emergency")
+    assert not ok, "Should have failed due to notice period"
+    print(f"    ✓ Correctly failed: {err}")
+
+    print("\n" + "=" * 60)
+    print("✅ All tests passed!")
+    print("=" * 60)
+
+if __name__ == "__main__":
+    run_test()

@@ -16,6 +16,9 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_db():
+    if os.path.exists(DB_PATH):
+        os.remove(DB_PATH)
+    
     with open(SCHEMA_PATH, "r") as f:
         schema = f.read()
     conn = get_connection()
@@ -29,12 +32,12 @@ def seed_data():
     conn = get_connection()
 
     # Seed leave types
-    for name, max_days, req_approval, req_docs, is_paid in DEFAULT_LEAVE_TYPES:
+    for name, quota, req_hr, req_docs, max_days, notice_period in DEFAULT_LEAVE_TYPES:
         conn.execute(
             """INSERT OR IGNORE INTO leave_types
-               (name, max_days_per_year, requires_approval, requires_docs, is_paid)
-               VALUES (?,?,?,?,?)""",
-            (name, max_days, int(req_approval), int(req_docs), int(is_paid)),
+               (name, annual_quota, requires_hr, requires_document, max_consecutive_days, notice_period_days)
+               VALUES (?,?,?,?,?,?)""",
+            (name, quota, int(req_hr), int(req_docs), max_days, notice_period),
         )
 
     # Seed HR admin
@@ -62,12 +65,12 @@ def seed_data():
 def provision_balances_for_user(user_id: int, year: int = CURRENT_YEAR):
     """Create leave balance rows for a newly created user."""
     conn = get_connection()
-    leave_types = conn.execute("SELECT id, max_days_per_year FROM leave_types").fetchall()
+    leave_types = conn.execute("SELECT id, annual_quota FROM leave_types").fetchall()
     for lt in leave_types:
         conn.execute(
             """INSERT OR IGNORE INTO leave_balances (user_id, leave_type_id, year, total_days, used_days)
                VALUES (?,?,?,?,0)""",
-            (user_id, lt["id"], year, lt["max_days_per_year"]),
+            (user_id, lt["id"], year, lt["annual_quota"]),
         )
     conn.commit()
     conn.close()

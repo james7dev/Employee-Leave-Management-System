@@ -5,13 +5,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from models.hr_admin import HRAdmin
 from services.auth_service import get_managers
-from services.leave_service import get_leave_types
+from services.leave_service import get_leave_types, get_request_approvals, get_request_documents
 from services.report_service import (
     get_leave_by_department, get_leave_type_summary,
     get_absence_rate, get_monthly_trend
 )
 from db.database import get_connection
-from config import DEPARTMENTS, ROLES, CURRENT_YEAR
+from config import DEPARTMENTS, ROLES, CURRENT_YEAR, STATUS_PENDING_HR
+
 
 try:
     import plotly.express as px
@@ -26,8 +27,8 @@ def show(user: dict):
     st.caption(f"{user['name']}  ·  Human Resources")
     st.divider()
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["👥 Users", "📋 Leave Types", "📅 Holidays", "📊 Reports", "🗒 All Requests"]
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+        ["👥 Users", "📋 Leave Types", "📅 Holidays", "📥 Pending HR Review", "📊 Reports", "🗒 All Requests"]
     )
 
     # ── Tab 1: Users ──────────────────────────────────────────────────────────
@@ -36,9 +37,9 @@ def show(user: dict):
         users = hr.get_all_users()
         if users:
             df = pd.DataFrame(users)[
-                ["id", "name", "email", "role", "department", "manager_name", "is_active"]
+                ["id", "name", "email", "role", "department", "manager_name", "is_active", "date_joined"]
             ]
-            df.columns = ["ID", "Name", "Email", "Role", "Department", "Manager", "Active"]
+            df.columns = ["ID", "Name", "Email", "Role", "Department", "Manager", "Active", "Joined"]
             df["Active"] = df["Active"].map({1: "✅", 0: "❌"})
             st.dataframe(df, use_container_width=True, hide_index=True)
 
@@ -70,21 +71,6 @@ def show(user: dict):
                 else:
                     st.error(f"❌ {result}")
 
-        st.markdown("---")
-        st.markdown("### Deactivate / Activate User")
-        uid_input = st.number_input("User ID", min_value=1, step=1, key="uid_action")
-        col_d, col_a = st.columns(2)
-        with col_d:
-            if st.button("Deactivate"):
-                ok, msg = hr.deactivate_user(int(uid_input))
-                st.success(msg) if ok else st.error(msg)
-                st.rerun()
-        with col_a:
-            if st.button("Activate"):
-                ok, msg = hr.activate_user(int(uid_input))
-                st.success(msg) if ok else st.error(msg)
-                st.rerun()
-
     # ── Tab 2: Leave Types ────────────────────────────────────────────────────
     with tab2:
         st.markdown("### Leave Type Configuration")
@@ -92,14 +78,19 @@ def show(user: dict):
         for lt in leave_types:
             with st.expander(f"📌 {lt['name']}"):
                 c1, c2, c3 = st.columns(3)
-                max_days    = c1.number_input("Max Days/Year", min_value=1, max_value=365,
-                                               value=lt["max_days_per_year"], key=f"md_{lt['id']}")
-                req_approval = c2.checkbox("Requires Approval",
-                                           value=bool(lt["requires_approval"]), key=f"ra_{lt['id']}")
+                quota    = c1.number_input("Annual Quota", min_value=0, max_value=365,
+                                               value=lt["annual_quota"], key=f"md_{lt['id']}")
+                req_hr       = c2.checkbox("Requires HR Approval",
+                                           value=bool(lt["requires_hr"]), key=f"rh_{lt['id']}")
                 req_docs     = c3.checkbox("Requires Docs",
-                                           value=bool(lt["requires_docs"]), key=f"rd_{lt['id']}")
+                                           value=bool(lt["requires_document"]), key=f"rd_{lt['id']}")
+                
+                c4, c5 = st.columns(2)
+                max_days = c4.number_input("Max Consecutive Days", min_value=0, value=lt["max_consecutive_days"] or 0, key=f"max_{lt['id']}")
+                notice = c5.number_input("Notice Period (days)", min_value=0, value=lt["notice_period_days"], key=f"notice_{lt['id']}")
+
                 if st.button("Save Changes", key=f"save_{lt['id']}"):
-                    ok, msg = hr.update_leave_type(lt["id"], max_days, req_approval, req_docs)
+                    ok, msg = hr.update_leave_type(lt["id"], quota, req_hr, req_docs, max_days, notice)
                     st.success(msg) if ok else st.error(msg)
 
         st.markdown("---")
@@ -119,15 +110,6 @@ def show(user: dict):
             df_hol = pd.DataFrame(holidays)[["id", "date", "name"]]
             df_hol.columns = ["ID", "Date", "Holiday Name"]
             st.dataframe(df_hol, use_container_width=True, hide_index=True)
-            
-            h_id_to_del = st.number_input("Holiday ID to Delete", min_value=1, step=1)
-            if st.button("Delete Holiday"):
-                ok, msg = hr.delete_holiday(int(h_id_to_del))
-                if ok:
-                    st.success(msg)
-                    st.rerun()
-                else:
-                    st.error(msg)
         else:
             st.info("No public holidays defined.")
 
@@ -146,8 +128,71 @@ def show(user: dict):
                 else:
                     st.error(msg)
 
-    # ── Tab 4: Reports ────────────────────────────────────────────────────────
+    # ── Tab 4: Pending HR Review ──────────────────────────────────────────────
     with tab4:
+        st.markdown("### Requests Pending HR Final Approval")
+        hr_pending = hr.get_hr_pending_requests()
+        if not hr_pending:
+            st.success("🎉 No requests pending HR review.")
+        else:
+            for r in hr_pending:
+                with st.expander(f"👤 {r['employee_name']} — {r['leave_type_name']} | {r['start_date']} → {r['end_date']}"):
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Employee", r["employee_name"])
+                    col2.metric("Department", r["department"])
+                    col3.metric("Working Days", f"{r['working_days']:.1f}")
+                    
+                    if r["reason"]:
+                        st.write(f"**Reason:** {r['reason']}")
+                    
+                    # Documents
+                    docs = get_request_documents(r["id"])
+                    for d in docs:
+                        try:
+                            with open(d["file_path"], "rb") as f:
+                                st.download_button(
+                                    f"📎 View {os.path.basename(d['file_path'])}",
+                                    f,
+                                    file_name=os.path.basename(d['file_path']),
+                                    key=f"dl_hr_pend_{r['id']}_{d['id']}"
+                                )
+                        except FileNotFoundError:
+                            st.error(f"File not found: {d['file_path']}")
+
+                    # History / Approvals
+                    approvals = get_request_approvals(r["id"])
+                    if approvals:
+                        st.markdown("---")
+                        st.markdown("**Approval History:**")
+                        for a in approvals:
+                            action_label = a["action"].replace("_", " ")
+                            st.write(f"**{a['timestamp'][:16]}** — {a['role'].title()} ({a['approver_name']}): {action_label}")
+                            if a["comment"]:
+                                st.info(f"💬 {a['comment']}")
+
+                    st.markdown("---")
+                    hr_note = st.text_input("HR Comment", key=f"hr_note_{r['id']}")
+                    c_a, c_b = st.columns(2)
+                    with c_a:
+                        if st.button("✅ Final Approve", key=f"hr_appr_{r['id']}", type="primary"):
+                            ok, msg = hr.approve_request(r["id"], hr_note)
+                            if ok:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                    with c_b:
+                        if st.button("❌ Final Reject", key=f"hr_rej_{r['id']}"):
+                            ok, msg = hr.reject_request(r["id"], hr_note)
+                            if ok:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+
+
+    # ── Tab 5: Reports ────────────────────────────────────────────────────────
+    with tab5:
         st.markdown("### Company Leave Reports")
         report_year = st.selectbox("Year", list(range(CURRENT_YEAR, CURRENT_YEAR - 5, -1)), key="rep_year")
 
@@ -203,12 +248,8 @@ def show(user: dict):
             df_abs.columns = ["Employee", "Department", "Days Used", "Absence Rate (%)"]
             st.dataframe(df_abs, use_container_width=True, hide_index=True)
 
-            csv = df_abs.to_csv(index=False).encode("utf-8")
-            st.download_button("⬇️ Download CSV", csv,
-                               f"absence_report_{report_year}.csv", "text/csv")
-
-    # ── Tab 5: All Requests ───────────────────────────────────────────────────
-    with tab5:
+    # ── Tab 6: All Requests ───────────────────────────────────────────────────
+    with tab6:
         st.markdown("### All Leave Requests")
         all_req = hr.get_all_requests()
         if not all_req:
@@ -220,7 +261,7 @@ def show(user: dict):
         # Filters
         col_f1, col_f2, col_f3 = st.columns(3)
         status_filter = col_f1.selectbox(
-            "Status", ["All", "Pending", "Approved", "Rejected", "Cancelled"], key="rf_status"
+            "Status", ["All", "Pending Manager", "Pending HR", "Approved", "Rejected", "Cancelled", "More Info Required"], key="rf_status"
         )
         dept_filter = col_f2.selectbox(
             "Department", ["All"] + sorted(df_all["department"].unique().tolist()), key="rf_dept"
@@ -230,12 +271,6 @@ def show(user: dict):
         if dept_filter != "All":
             df_all = df_all[df_all["department"] == dept_filter]
 
-        show_cols = ["employee_name", "department", "leave_type_name",
-                     "start_date", "end_date", "working_days", "status", "submitted_at"]
-        display_df = df_all[show_cols].copy()
-        display_df.columns = ["Employee", "Department", "Leave Type",
-                               "Start", "End", "Days", "Status", "Submitted"]
-        
         for idx, r in df_all.iterrows():
             with st.expander(f"{r['employee_name']} | {r['leave_type_name']} | {r['start_date']} → {r['end_date']} | {r['status']}"):
                 col1, col2 = st.columns(2)
@@ -245,18 +280,8 @@ def show(user: dict):
                 col2.write(f"**Submitted:** {r['submitted_at']}")
                 col2.write(f"**Status:** {r['status']}")
                 if r['reason']: st.write(f"**Reason:** {r['reason']}")
-                if r['manager_note']: st.write(f"**Manager Note:** {r['manager_note']}")
-                if r.get("attachment_path"):
-                    try:
-                        with open(r["attachment_path"], "rb") as f:
-                            st.download_button(
-                                "📎 View Attachment",
-                                f,
-                                file_name=os.path.basename(r["attachment_path"]),
-                                key=f"dl_hr_{r['id']}"
-                            )
-                    except FileNotFoundError:
-                        st.error("Attachment file not found.")
-
-        csv = display_df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Export as CSV", csv, "all_requests.csv", "text/csv")
+                
+                approvals = get_request_approvals(r["id"])
+                for a in approvals:
+                    st.write(f"**{a['role'].title()} ({a['approver_name']}):** {a['action']}")
+                    if a["comment"]: st.info(f"💬 {a['comment']}")
