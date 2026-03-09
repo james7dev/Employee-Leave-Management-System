@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS leave_requests (
     status          TEXT    NOT NULL DEFAULT 'Pending'
                     CHECK(status IN ('Pending','Approved','Rejected','Cancelled')),
     reason          TEXT,
+    attachment_path TEXT,
     manager_note    TEXT,
     submitted_at    TEXT    DEFAULT (datetime('now')),
     actioned_at     TEXT

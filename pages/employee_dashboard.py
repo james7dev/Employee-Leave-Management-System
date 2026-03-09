@@ -102,23 +102,39 @@ def show(user: dict):
             end_date   = st.date_input("End Date", min_value=date.today())
 
         reason = st.text_area("Reason (optional)", placeholder="Brief description of your leave reason...")
+        
+        lt = lt_map[lt_name]
+        attachment_path = None
+        if lt.get("requires_docs"):
+            uploaded_file = st.file_uploader("Upload Supporting Document", type=["pdf", "jpg", "png"])
+            if uploaded_file:
+                # In a real app, we'd save this to a persistent storage
+                # For this demo, we'll just save it to an 'uploads' directory
+                if not os.path.exists("uploads"):
+                    os.makedirs("uploads")
+                safe_name = os.path.basename(uploaded_file.name)
+                attachment_path = os.path.join("uploads", f"{user['id']}_{safe_name}")
+                with open(attachment_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
 
         if st.button("Submit Request", type="primary"):
-            lt    = lt_map[lt_name]
-            start = start_date.strftime("%Y-%m-%d")
-            end   = end_date.strftime("%Y-%m-%d")
-
-            conflicts = check_conflict(emp.id, start, end)
-            if conflicts:
-                names = ", ".join(c["name"] for c in conflicts)
-                st.warning(f"⚠️ Heads up: {names} also have approved leave in this period.")
-
-            ok, result = submit_leave(emp.id, lt["id"], start, end, reason, is_half)
-            if ok:
-                st.success(f"✅ Leave request submitted! (Request #{result})")
-                st.rerun()
+            if lt.get("requires_docs") and not attachment_path:
+                st.error("❌ Supporting document is required for this leave type.")
             else:
-                st.error(f"❌ {result}")
+                start = start_date.strftime("%Y-%m-%d")
+                end   = end_date.strftime("%Y-%m-%d")
+
+                conflicts = check_conflict(emp.id, start, end)
+                if conflicts:
+                    names = ", ".join(c["name"] for c in conflicts)
+                    st.warning(f"⚠️ Heads up: {names} also have approved leave in this period.")
+
+                ok, result = submit_leave(emp.id, lt["id"], start, end, reason, is_half, attachment_path)
+                if ok:
+                    st.success(f"✅ Leave request submitted! (Request #{result})")
+                    st.rerun()
+                else:
+                    st.error(f"❌ {result}")
 
     # ── Tab 3: My Requests ────────────────────────────────────────────────────
     with tab3:
@@ -141,6 +157,14 @@ def show(user: dict):
 
                 if r["reason"]:
                     st.caption(f"📝 Reason: {r['reason']}")
+                if r.get("attachment_path"):
+                    with open(r["attachment_path"], "rb") as f:
+                        st.download_button(
+                            "view Attachment",
+                            f,
+                            file_name=os.path.basename(r["attachment_path"]),
+                            key=f"dl_{r['id']}"
+                        )
                 if r["manager_note"]:
                     st.info(f"💬 Manager note: {r['manager_note']}")
 

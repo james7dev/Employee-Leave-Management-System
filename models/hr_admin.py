@@ -82,6 +82,33 @@ class HRAdmin(Person):
         conn.close()
         return [dict(r) for r in rows]
 
+    def add_holiday(self, date_str: str, name: str) -> tuple:
+        conn = get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO public_holidays (date, name) VALUES (?,?)",
+                (date_str, name),
+            )
+            conn.commit()
+            conn.close()
+            return True, "Holiday added."
+        except Exception as e:
+            conn.close()
+            return False, str(e)
+
+    def delete_holiday(self, holiday_id: int) -> tuple:
+        conn = get_connection()
+        conn.execute("DELETE FROM public_holidays WHERE id=?", (holiday_id,))
+        conn.commit()
+        conn.close()
+        return True, "Holiday deleted."
+
+    def get_holidays(self) -> list:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM public_holidays ORDER BY date").fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
     def get_all_users(self) -> list:
         conn = get_connection()
         rows = conn.execute(

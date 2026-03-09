@@ -45,6 +45,18 @@ def show(user: dict):
 
                     if r["reason"]:
                         st.caption(f"📝 Reason: {r['reason']}")
+                    
+                    if r.get("attachment_path"):
+                        try:
+                            with open(r["attachment_path"], "rb") as f:
+                                st.download_button(
+                                    "📎 View Attachment",
+                                    f,
+                                    file_name=os.path.basename(r["attachment_path"]),
+                                    key=f"dl_mgr_{r['id']}"
+                                )
+                        except FileNotFoundError:
+                            st.error("Attachment file not found.")
 
                     if conflicts:
                         names = ", ".join(c["name"] for c in conflicts)
@@ -80,13 +92,22 @@ def show(user: dict):
         if not approved:
             st.info("No approved leave records yet.")
         else:
-            df = pd.DataFrame(approved)[
-                ["employee_name", "department", "leave_type_name",
-                 "start_date", "end_date", "working_days", "manager_note"]
-            ]
-            df.columns = ["Employee", "Department", "Leave Type",
-                          "Start", "End", "Days", "Note"]
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            for r in approved:
+                with st.expander(f"👤 {r['employee_name']} — {r['leave_type_name']} | {r['start_date']} → {r['end_date']}"):
+                    st.write(f"**Days:** {r['working_days']:.1f}")
+                    if r['reason']: st.write(f"**Reason:** {r['reason']}")
+                    if r['manager_note']: st.write(f"**Note:** {r['manager_note']}")
+                    if r.get("attachment_path"):
+                        try:
+                            with open(r["attachment_path"], "rb") as f:
+                                st.download_button(
+                                    "📎 View Attachment",
+                                    f,
+                                    file_name=os.path.basename(r["attachment_path"]),
+                                    key=f"dl_mgr_appr_{r['id']}"
+                                )
+                        except FileNotFoundError:
+                            st.error("Attachment file not found.")
 
     # ── Tab 3: Team Calendar ──────────────────────────────────────────────────
     with tab3:

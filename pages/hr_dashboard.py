@@ -26,8 +26,8 @@ def show(user: dict):
     st.caption(f"{user['name']}  ·  Human Resources")
     st.divider()
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["👥 Users", "📋 Leave Types", "📊 Reports", "🗒 All Requests"]
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["👥 Users", "📋 Leave Types", "📅 Holidays", "📊 Reports", "🗒 All Requests"]
     )
 
     # ── Tab 1: Users ──────────────────────────────────────────────────────────
@@ -111,8 +111,43 @@ def show(user: dict):
             ok, msg = hr.reset_balances(int(reset_year))
             st.success(msg) if ok else st.error(msg)
 
-    # ── Tab 3: Reports ────────────────────────────────────────────────────────
+    # ── Tab 3: Holidays ───────────────────────────────────────────────────────
     with tab3:
+        st.markdown("### Public Holidays")
+        holidays = hr.get_holidays()
+        if holidays:
+            df_hol = pd.DataFrame(holidays)[["id", "date", "name"]]
+            df_hol.columns = ["ID", "Date", "Holiday Name"]
+            st.dataframe(df_hol, use_container_width=True, hide_index=True)
+            
+            h_id_to_del = st.number_input("Holiday ID to Delete", min_value=1, step=1)
+            if st.button("Delete Holiday"):
+                ok, msg = hr.delete_holiday(int(h_id_to_del))
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        else:
+            st.info("No public holidays defined.")
+
+        st.markdown("---")
+        st.markdown("### ➕ Add Holiday")
+        h_date = st.date_input("Holiday Date")
+        h_name = st.text_input("Holiday Name")
+        if st.button("Add Holiday"):
+            if not h_name:
+                st.error("Holiday name is required.")
+            else:
+                ok, msg = hr.add_holiday(h_date.strftime("%Y-%m-%d"), h_name)
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+    # ── Tab 4: Reports ────────────────────────────────────────────────────────
+    with tab4:
         st.markdown("### Company Leave Reports")
         report_year = st.selectbox("Year", list(range(CURRENT_YEAR, CURRENT_YEAR - 5, -1)), key="rep_year")
 
@@ -172,8 +207,8 @@ def show(user: dict):
             st.download_button("⬇️ Download CSV", csv,
                                f"absence_report_{report_year}.csv", "text/csv")
 
-    # ── Tab 4: All Requests ───────────────────────────────────────────────────
-    with tab4:
+    # ── Tab 5: All Requests ───────────────────────────────────────────────────
+    with tab5:
         st.markdown("### All Leave Requests")
         all_req = hr.get_all_requests()
         if not all_req:
@@ -200,7 +235,28 @@ def show(user: dict):
         display_df = df_all[show_cols].copy()
         display_df.columns = ["Employee", "Department", "Leave Type",
                                "Start", "End", "Days", "Status", "Submitted"]
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        
+        for idx, r in df_all.iterrows():
+            with st.expander(f"{r['employee_name']} | {r['leave_type_name']} | {r['start_date']} → {r['end_date']} | {r['status']}"):
+                col1, col2 = st.columns(2)
+                col1.write(f"**Employee:** {r['employee_name']}")
+                col1.write(f"**Department:** {r['department']}")
+                col1.write(f"**Days:** {r['working_days']:.1f}")
+                col2.write(f"**Submitted:** {r['submitted_at']}")
+                col2.write(f"**Status:** {r['status']}")
+                if r['reason']: st.write(f"**Reason:** {r['reason']}")
+                if r['manager_note']: st.write(f"**Manager Note:** {r['manager_note']}")
+                if r.get("attachment_path"):
+                    try:
+                        with open(r["attachment_path"], "rb") as f:
+                            st.download_button(
+                                "📎 View Attachment",
+                                f,
+                                file_name=os.path.basename(r["attachment_path"]),
+                                key=f"dl_hr_{r['id']}"
+                            )
+                    except FileNotFoundError:
+                        st.error("Attachment file not found.")
 
         csv = display_df.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Export as CSV", csv, "all_requests.csv", "text/csv")

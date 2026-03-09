@@ -53,7 +53,8 @@ def validate_request(employee_id: int, leave_type_id: int,
 
 def submit_leave(employee_id: int, leave_type_id: int,
                  start_str: str, end_str: str,
-                 reason: str = "", is_half_day: bool = False) -> tuple:
+                 reason: str = "", is_half_day: bool = False,
+                 attachment_path: str = None) -> tuple:
     ok, result = validate_request(employee_id, leave_type_id, start_str, end_str, is_half_day)
     if not ok:
         return False, result
@@ -62,9 +63,9 @@ def submit_leave(employee_id: int, leave_type_id: int,
     conn = get_connection()
     cur = conn.execute(
         """INSERT INTO leave_requests
-           (employee_id, leave_type_id, start_date, end_date, working_days, is_half_day, reason)
-           VALUES (?,?,?,?,?,?,?)""",
-        (employee_id, leave_type_id, start_str, end_str, working_days, int(is_half_day), reason),
+           (employee_id, leave_type_id, start_date, end_date, working_days, is_half_day, reason, attachment_path)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (employee_id, leave_type_id, start_str, end_str, working_days, int(is_half_day), reason, attachment_path),
     )
     request_id = cur.lastrowid
 
