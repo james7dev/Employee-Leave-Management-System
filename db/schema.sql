@@ -86,3 +86,10 @@ CREATE TABLE IF NOT EXISTS audit_log (
     target_id   INTEGER,
     timestamp   TEXT    DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token       TEXT    PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    created_at  TEXT    DEFAULT (datetime('now')),
+    expires_at  TEXT    NOT NULL
+);

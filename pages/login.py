@@ -1,7 +1,7 @@
 import streamlit as st
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from services.auth_service import login
+from services.auth_service import login, create_session
 
 
 def show():
@@ -61,6 +61,9 @@ def show():
                     user = login(email.strip(), password)
                     if user:
                         st.session_state["user"] = user
+                        # Create session token and store in query params
+                        token = create_session(user["id"])
+                        st.query_params["session_token"] = token
                         st.rerun()
                     else:
                         st.error("Invalid credentials or account is inactive.")

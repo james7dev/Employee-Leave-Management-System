@@ -1,4 +1,6 @@
 import hashlib
+import secrets
+import datetime
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -18,6 +20,38 @@ def login(email: str, password: str) -> dict | None:
     if row and row["password"] == hash_password(password):
         return dict(row)
     return None
+
+
+def create_session(user_id: int, days: int = 7) -> str:
+    token = secrets.token_urlsafe(32)
+    expires_at = (datetime.datetime.now() + datetime.timedelta(days=days)).isoformat()
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
+        (token, user_id, expires_at)
+    )
+    conn.commit()
+    conn.close()
+    return token
+
+
+def get_user_from_session(token: str) -> dict | None:
+    conn = get_connection()
+    row = conn.execute(
+        """SELECT u.* FROM users u 
+           JOIN sessions s ON u.id = s.user_id 
+           WHERE s.token = ? AND s.expires_at > ? AND u.is_active = 1""",
+        (token, datetime.datetime.now().isoformat())
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def delete_session(token: str):
+    conn = get_connection()
+    conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+    conn.commit()
+    conn.close()
 
 
 def get_user_by_id(user_id: int) -> dict | None:

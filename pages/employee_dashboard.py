@@ -106,7 +106,11 @@ def show(user: dict):
         col_a, col_b = st.columns(2)
         with col_a:
             lt_name    = st.selectbox("Leave Type", list(lt_map.keys()))
-            start_date = st.date_input("Start Date", min_value=date.today())
+            lt = lt_map[lt_name]
+            # Notice Period Validation - prevent selecting dates before the notice period
+            from datetime import timedelta
+            min_start = date.today() + timedelta(days=lt["notice_period_days"])
+            start_date = st.date_input("Start Date", min_value=min_start)
         with col_b:
             is_half    = st.checkbox("Half Day")
             if is_half:
@@ -117,7 +121,6 @@ def show(user: dict):
 
         reason = st.text_area("Reason (optional)", placeholder="Brief description of your leave reason...")
         
-        lt = lt_map[lt_name]
         attachment_path = None
         if lt.get("requires_document"):
             st.info(f"📎 **{lt_name}** requires a supporting document.")

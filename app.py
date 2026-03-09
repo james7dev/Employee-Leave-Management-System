@@ -61,9 +61,21 @@ h1, h2, h3 {
 
 from utils.notifications import get_unread, mark_all_read
 from pages import login, register, employee_dashboard, manager_dashboard, hr_dashboard, profile
+from services.auth_service import get_user_from_session, delete_session
 
 # ── Session guard ─────────────────────────────────────────────────────────────
 if "user" not in st.session_state:
+    # Check for session token in query params
+    token = st.query_params.get("session_token")
+    if token:
+        user = get_user_from_session(token)
+        if user:
+            st.session_state["user"] = user
+            st.rerun()
+        else:
+            # Token invalid/expired - clear it
+            del st.query_params["session_token"]
+
     if st.session_state.get("page") == "register":
         register.show()
     else:
@@ -98,6 +110,12 @@ with st.sidebar:
         st.rerun()
 
     if st.button("🚪 Sign Out"):
+        # Clear database session if exists
+        token = st.query_params.get("session_token")
+        if token:
+            delete_session(token)
+            del st.query_params["session_token"]
+            
         del st.session_state["user"]
         if "page" in st.session_state:
             del st.session_state["page"]
