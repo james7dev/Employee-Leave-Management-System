@@ -11,7 +11,10 @@ from services.report_service import (
     get_absence_rate, get_monthly_trend
 )
 from db.database import get_connection
-from config import DEPARTMENTS, ROLES, CURRENT_YEAR, STATUS_PENDING_HR
+from config import (
+    DEPARTMENTS, ROLES, CURRENT_YEAR, STATUS_PENDING_HR, 
+    STATUS_PENDING_MANAGER
+)
 
 
 try:
@@ -28,7 +31,7 @@ def show(user: dict):
     st.divider()
 
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-        ["👥 Users", "📋 Leave Types", "📅 Holidays", "📥 Pending HR Review", "📊 Reports", "🗒 All Requests"]
+        ["👥 Users", "📋 Leave Types", "📅 Holidays", "📥 Pending Action", "📊 Reports", "🗒 All Requests"]
     )
 
     # ── Tab 1: Users ──────────────────────────────────────────────────────────
@@ -130,10 +133,30 @@ def show(user: dict):
                 else:
                     st.error(msg)
 
-    # ── Tab 4: Pending HR Review ──────────────────────────────────────────────
+    # ── Tab 4: Pending Action ─────────────────────────────────────────────────
     with tab4:
-        st.markdown("### Requests Pending HR Final Approval")
+        st.markdown("### Requests Pending Action")
+        # Combine requests pending HR review and those pending manager but viewable by HR
         hr_pending = hr.get_hr_pending_requests()
+        # Add a section for manager-pending requests that HR can override
+        conn = get_connection()
+        mgr_pending = conn.execute(
+            """SELECT lr.*, lt.name as leave_type_name,
+                      u.name as employee_name, u.department
+               FROM leave_requests lr
+               JOIN leave_types lt ON lt.id = lr.leave_type_id
+               JOIN users u ON u.id = lr.employee_id
+               WHERE lr.status='Pending Manager'
+               ORDER BY lr.submitted_at ASC"""
+        ).fetchall()
+        mgr_pending = [dict(r) for r in mgr_pending]
+        conn.close()
+
+        if not hr_pending and not mgr_pending:
+            st.success("🎉 No requests pending HR action.")
+        
+        if hr_pending:
+            st.subheader("📥 Pending HR Final Approval")
         if not hr_pending:
             st.success("🎉 No requests pending HR review.")
         else:
@@ -185,6 +208,53 @@ def show(user: dict):
                                 st.error(msg)
                     with c_b:
                         if st.button("❌ Final Reject", key=f"hr_rej_{r['id']}"):
+                            ok, msg = hr.reject_request(r["id"], hr_note)
+                            if ok:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+        if mgr_pending:
+            st.divider()
+            st.subheader("⏳ Overriding Manager Review")
+            st.caption("HR can directly approve or reject requests currently pending manager review.")
+            for r in mgr_pending:
+                with st.expander(f"👤 {r['employee_name']} — {r['leave_type_name']} | {r['start_date']} → {r['end_date']}"):
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Employee", r["employee_name"])
+                    col2.metric("Department", r["department"])
+                    col3.metric("Working Days", f"{r['working_days']:.1f}")
+                    
+                    if r["reason"]:
+                        st.write(f"**Reason:** {r['reason']}")
+                    
+                    # Documents
+                    docs = get_request_documents(r["id"])
+                    for d in docs:
+                        try:
+                            with open(d["file_path"], "rb") as f:
+                                st.download_button(
+                                    f"📎 View {os.path.basename(d['file_path'])}",
+                                    f,
+                                    file_name=os.path.basename(d['file_path']),
+                                    key=f"dl_hr_mgr_{r['id']}_{d['id']}"
+                                )
+                        except FileNotFoundError:
+                            pass
+
+                    st.markdown("---")
+                    hr_note = st.text_input("HR Comment (Manager Override)", key=f"hr_note_mgr_{r['id']}")
+                    c_a, c_b = st.columns(2)
+                    with c_a:
+                        if st.button("✅ Direct Approve", key=f"hr_appr_mgr_{r['id']}", type="primary"):
+                            ok, msg = hr.approve_request(r["id"], hr_note)
+                            if ok:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                    with c_b:
+                        if st.button("❌ Direct Reject", key=f"hr_rej_mgr_{r['id']}"):
                             ok, msg = hr.reject_request(r["id"], hr_note)
                             if ok:
                                 st.success(msg)
@@ -282,7 +352,48 @@ def show(user: dict):
                     col2.write(f"**Status:** {r['status']}")
                     if r['reason']: st.write(f"**Reason:** {r['reason']}")
                     
+                    # Documents
+                    docs = get_request_documents(r["id"])
+                    if docs:
+                        for d in docs:
+                            try:
+                                with open(d["file_path"], "rb") as f:
+                                    st.download_button(
+                                        f"📎 View {os.path.basename(d['file_path'])}",
+                                        f,
+                                        file_name=os.path.basename(d['file_path']),
+                                        key=f"dl_all_{r['id']}_{d['id']}"
+                                    )
+                            except FileNotFoundError:
+                                pass
+
                     approvals = get_request_approvals(r["id"])
-                    for a in approvals:
-                        st.write(f"**{a['role'].title()} ({a['approver_name']}):** {a['action']}")
-                        if a["comment"]: st.info(f"💬 {a['comment']}")
+                    if approvals:
+                        st.markdown("---")
+                        st.markdown("**Approval History:**")
+                        for a in approvals:
+                            st.write(f"**{a['role'].title()} ({a['approver_name']}):** {a['action']}")
+                            if a["comment"]: st.info(f"💬 {a['comment']}")
+
+                    # HR Action buttons if pending
+                    if r["status"] in [STATUS_PENDING_HR, STATUS_PENDING_MANAGER]:
+                        st.markdown("---")
+                        st.markdown("**HR Direct Action:**")
+                        hr_note_all = st.text_input("HR Comment", key=f"hr_note_all_{r['id']}")
+                        c_a, c_b = st.columns(2)
+                        with c_a:
+                            if st.button("✅ Approve", key=f"hr_appr_all_{r['id']}", type="primary"):
+                                ok, msg = hr.approve_request(r["id"], hr_note_all)
+                                if ok:
+                                    st.success(msg)
+                                    st.rerun()
+                                else:
+                                    st.error(msg)
+                        with c_b:
+                            if st.button("❌ Reject", key=f"hr_rej_all_{r['id']}"):
+                                ok, msg = hr.reject_request(r["id"], hr_note_all)
+                                if ok:
+                                    st.success(msg)
+                                    st.rerun()
+                                else:
+                                    st.error(msg)

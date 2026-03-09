@@ -37,8 +37,8 @@ def run_test():
     ok, emp_id = hr.create_user("Test Employee", "emp@test.com", "pass123", "employee", "Engineering", manager_id=mgr_id)
     print(f"    ✓ Manager ID: {mgr_id}, Employee ID: {emp_id}")
 
-    # 3. Test 1: Annual Leave (No HR)
-    print("\n[3] Test 1: Annual Leave (Manager Approval Only)")
+    # 3. Test 1: Annual Leave (Manager -> HR)
+    print("\n[3] Test 1: Annual Leave (Manager Forward -> HR Approve)")
     emp = Employee.from_row(login("emp@test.com", "pass123"))
     conn = get_connection()
     lt_annual = conn.execute("SELECT id FROM leave_types WHERE name='Annual Leave'").fetchone()
@@ -54,7 +54,11 @@ def run_test():
     mgr = Manager.from_row(login("mgr@test.com", "pass123"))
     ok, msg = mgr.approve_request(req_id, "Approved by mgr")
     assert ok, f"Approve failed: {msg}"
-    assert "approved" in msg.lower()
+    assert "forwarded" in msg.lower()
+
+    # HR final approves
+    ok, msg = hr.approve_request(req_id, "HR final ok")
+    assert ok, f"HR approve failed: {msg}"
 
     bal_after = emp.get_balance(lt_annual["id"])
     assert bal_after < bal_before, "Balance not deducted"

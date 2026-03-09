@@ -56,19 +56,9 @@ class Manager(Employee):
             conn.close()
             return False, f"Request is already '{row['status']}'."
 
-        if row["requires_hr"]:
-            new_status = STATUS_PENDING_HR
-            msg = "Request forwarded to HR."
-        else:
-            new_status = STATUS_APPROVED
-            msg = "Request approved."
-            # Deduct balance only when fully approved
-            conn.execute(
-                """UPDATE leave_balances
-                   SET used_days = used_days + ?
-                   WHERE user_id=? AND leave_type_id=? AND year=strftime('%Y', ?)""",
-                (row["working_days"], row["employee_id"], row["leave_type_id"], row["start_date"]),
-            )
+        # All requests are now forwarded to HR as per user requirement
+        new_status = STATUS_PENDING_HR
+        msg = "Request forwarded to HR."
 
         conn.execute(
             """UPDATE leave_requests SET status=?, manager_id=?,
@@ -80,7 +70,7 @@ class Manager(Employee):
         conn.execute(
             """INSERT INTO leave_approvals (leave_request_id, approver_id, role, action, comment)
                VALUES (?,?,?,?,?)""",
-            (request_id, self.id, "manager", "APPROVED" if not row["requires_hr"] else "FORWARDED", note)
+            (request_id, self.id, "manager", "FORWARDED", note)
         )
 
         conn.commit()

@@ -82,16 +82,18 @@ class HRAdmin(Person):
         return [dict(r) for r in rows]
 
     def approve_request(self, request_id: int, note: str = "") -> tuple:
+        from config import STATUS_PENDING_MANAGER
         conn = get_connection()
         row = conn.execute(
-            """SELECT lr.* FROM leave_requests lr
-               WHERE lr.id=? AND lr.status=?""",
-            (request_id, STATUS_PENDING_HR),
+            """SELECT lr.*, u.manager_id FROM leave_requests lr
+               JOIN users u ON u.id = lr.employee_id
+               WHERE lr.id=? AND lr.status IN (?, ?)""",
+            (request_id, STATUS_PENDING_HR, STATUS_PENDING_MANAGER),
         ).fetchone()
         
         if not row:
             conn.close()
-            return False, "Request not found or not pending HR approval."
+            return False, "Request not found or not in a pending state."
 
         conn.execute(
             """UPDATE leave_balances
@@ -115,24 +117,39 @@ class HRAdmin(Person):
         conn.close()
         
         from utils.notifications import send_notification
-        send_notification(
-            row["employee_id"],
-            f"✅ Your leave request ({row['start_date']} → {row['end_date']}) was approved by HR.",
-        )
+        
+        # Get employee name for manager notification
+        conn = get_connection()
+        emp_name = conn.execute("SELECT name FROM users WHERE id=?", (row["employee_id"],)).fetchone()["name"]
+        conn.close()
+
+        # Notify Employee
+        msg_emp = f"✅ Your leave request ({row['start_date']} → {row['end_date']}) was approved by HR."
+        if note: msg_emp += f" HR Note: {note}"
+        send_notification(row["employee_id"], msg_emp)
+        
+        # Notify Manager
+        if row["manager_id"]:
+            msg_mgr = f"✅ HR has approved the leave request for {emp_name} ({row['start_date']} → {row['end_date']})."
+            if note: msg_mgr += f" HR Note: {note}"
+            send_notification(row["manager_id"], msg_mgr)
+            
         return True, "Request approved."
 
     def reject_request(self, request_id: int, note: str) -> tuple:
+        from config import STATUS_PENDING_MANAGER
         if not note or not note.strip():
             return False, "A rejection note is required."
         conn = get_connection()
         row = conn.execute(
-            """SELECT lr.* FROM leave_requests lr
-               WHERE lr.id=? AND lr.status=?""",
-            (request_id, STATUS_PENDING_HR),
+            """SELECT lr.*, u.manager_id FROM leave_requests lr
+               JOIN users u ON u.id = lr.employee_id
+               WHERE lr.id=? AND lr.status IN (?, ?)""",
+            (request_id, STATUS_PENDING_HR, STATUS_PENDING_MANAGER),
         ).fetchone()
         if not row:
             conn.close()
-            return False, "Request not found or not pending HR approval."
+            return False, "Request not found or not in a pending state."
         
         conn.execute(
             """UPDATE leave_requests SET status=?, hr_id=?,
@@ -147,13 +164,24 @@ class HRAdmin(Person):
         )
         
         conn.commit()
-        conn.close()
         
         from utils.notifications import send_notification
+        # Get employee name for manager notification
+        emp_name = conn.execute("SELECT name FROM users WHERE id=?", (row["employee_id"],)).fetchone()["name"]
+        conn.close()
+
+        # Notify Employee
         send_notification(
             row["employee_id"],
             f"❌ Your leave request ({row['start_date']} → {row['end_date']}) was rejected by HR. Note: {note}",
         )
+        # Notify Manager
+        if row["manager_id"]:
+            send_notification(
+                row["manager_id"],
+                f"❌ HR has rejected the leave request for {emp_name} ({row['start_date']} → {row['end_date']}). Note: {note}",
+            )
+            
         return True, "Request rejected."
 
     def add_holiday(self, date_str: str, name: str) -> tuple:
