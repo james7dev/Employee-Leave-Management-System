@@ -119,7 +119,7 @@ elif role == "manager":
         manager_dashboard.show(user)
     else:
         employee_dashboard.show(user)
-elif role == "hr":
+elif role == "hr" or role == "admin":
     hr_dashboard.show(user)
 else:
     st.error(f"Unknown role: {role}")

@@ -3,7 +3,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from models.person import Person
 from db.database import get_connection
-from config import CURRENT_YEAR, STATUS_PENDING_MANAGER, STATUS_PENDING_HR, STATUS_CANCELLED
+from config import CURRENT_YEAR, STATUS_PENDING_MANAGER, STATUS_PENDING_HR, STATUS_CANCELLED, STATUS_APPROVED, STATUS_MORE_INFO_REQUIRED
 
 
 class Employee(Person):
@@ -67,7 +67,7 @@ class Employee(Person):
         if not row:
             conn.close()
             return False, "Request not found."
-        if row["status"] not in (STATUS_PENDING_MANAGER, STATUS_PENDING_HR):
+        if row["status"] not in (STATUS_PENDING_MANAGER, STATUS_PENDING_HR, STATUS_APPROVED, STATUS_MORE_INFO_REQUIRED):
             conn.close()
             return False, f"Cannot cancel a request with status '{row['status']}'."
         
@@ -77,7 +77,7 @@ class Employee(Person):
         # And "If approved leave is cancelled: balance restored"
         
         # Let's handle both for robustness if needed, but primarily follow the rules.
-        is_already_approved = row["status"] == "Approved"
+        is_already_approved = row["status"] == STATUS_APPROVED
 
         conn.execute(
             "UPDATE leave_requests SET status=?, updated_at=datetime('now') WHERE id=?",

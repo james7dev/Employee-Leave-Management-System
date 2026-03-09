@@ -17,7 +17,7 @@ def get_connection() -> sqlite3.Connection:
 
 def init_db():
     if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
+        return
     
     with open(SCHEMA_PATH, "r") as f:
         schema = f.read()

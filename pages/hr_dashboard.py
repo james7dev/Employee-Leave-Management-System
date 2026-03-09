@@ -54,7 +54,8 @@ def show(user: dict):
             new_role  = st.selectbox("Role", ROLES, key="new_role")
             new_dept  = st.selectbox("Department", DEPARTMENTS, key="new_dept")
             managers  = get_managers()
-            mgr_opts  = {f"{m['name']} ({m['department']})": m["id"] for m in managers}
+            # Use unique labels to avoid key collisions
+            mgr_opts  = {f"{m['name']} ({m['department']}) [ID: {m['id']}]": m["id"] for m in managers}
             mgr_opts  = {"(None)": None, **mgr_opts}
             mgr_label = st.selectbox("Manager", list(mgr_opts.keys()), key="new_mgr")
             mgr_id    = mgr_opts[mgr_label]
@@ -66,6 +67,7 @@ def show(user: dict):
                 ok, result = hr.create_user(new_name, new_email, new_pw,
                                              new_role, new_dept, mgr_id)
                 if ok:
+                    st.toast(f"✅ User created: {new_name}")
                     st.success(f"✅ User created (ID: {result})")
                     st.rerun()
                 else:
@@ -254,34 +256,33 @@ def show(user: dict):
         all_req = hr.get_all_requests()
         if not all_req:
             st.info("No requests found.")
-            return
+        else:
+            df_all = pd.DataFrame(all_req)
 
-        df_all = pd.DataFrame(all_req)
+            # Filters
+            col_f1, col_f2, col_f3 = st.columns(3)
+            status_filter = col_f1.selectbox(
+                "Status", ["All", "Pending Manager", "Pending HR", "Approved", "Rejected", "Cancelled", "More Info Required"], key="rf_status"
+            )
+            dept_filter = col_f2.selectbox(
+                "Department", ["All"] + sorted(df_all["department"].unique().tolist()), key="rf_dept"
+            )
+            if status_filter != "All":
+                df_all = df_all[df_all["status"] == status_filter]
+            if dept_filter != "All":
+                df_all = df_all[df_all["department"] == dept_filter]
 
-        # Filters
-        col_f1, col_f2, col_f3 = st.columns(3)
-        status_filter = col_f1.selectbox(
-            "Status", ["All", "Pending Manager", "Pending HR", "Approved", "Rejected", "Cancelled", "More Info Required"], key="rf_status"
-        )
-        dept_filter = col_f2.selectbox(
-            "Department", ["All"] + sorted(df_all["department"].unique().tolist()), key="rf_dept"
-        )
-        if status_filter != "All":
-            df_all = df_all[df_all["status"] == status_filter]
-        if dept_filter != "All":
-            df_all = df_all[df_all["department"] == dept_filter]
-
-        for idx, r in df_all.iterrows():
-            with st.expander(f"{r['employee_name']} | {r['leave_type_name']} | {r['start_date']} → {r['end_date']} | {r['status']}"):
-                col1, col2 = st.columns(2)
-                col1.write(f"**Employee:** {r['employee_name']}")
-                col1.write(f"**Department:** {r['department']}")
-                col1.write(f"**Days:** {r['working_days']:.1f}")
-                col2.write(f"**Submitted:** {r['submitted_at']}")
-                col2.write(f"**Status:** {r['status']}")
-                if r['reason']: st.write(f"**Reason:** {r['reason']}")
-                
-                approvals = get_request_approvals(r["id"])
-                for a in approvals:
-                    st.write(f"**{a['role'].title()} ({a['approver_name']}):** {a['action']}")
-                    if a["comment"]: st.info(f"💬 {a['comment']}")
+            for idx, r in df_all.iterrows():
+                with st.expander(f"{r['employee_name']} | {r['leave_type_name']} | {r['start_date']} → {r['end_date']} | {r['status']}"):
+                    col1, col2 = st.columns(2)
+                    col1.write(f"**Employee:** {r['employee_name']}")
+                    col1.write(f"**Department:** {r['department']}")
+                    col1.write(f"**Days:** {r['working_days']:.1f}")
+                    col2.write(f"**Submitted:** {r['submitted_at']}")
+                    col2.write(f"**Status:** {r['status']}")
+                    if r['reason']: st.write(f"**Reason:** {r['reason']}")
+                    
+                    approvals = get_request_approvals(r["id"])
+                    for a in approvals:
+                        st.write(f"**{a['role'].title()} ({a['approver_name']}):** {a['action']}")
+                        if a["comment"]: st.info(f"💬 {a['comment']}")
