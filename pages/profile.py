@@ -3,6 +3,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.auth_service import change_password
+from models.employee import Employee
 
 def show(user: dict):
     st.markdown(f"## 👤 User Profile")
@@ -16,6 +17,12 @@ def show(user: dict):
         st.write(f"**Email:** {user['email']}")
         st.write(f"**Role:** {user['role'].title()}")
         st.write(f"**Department:** {user['department']}")
+        
+        st.markdown("### Leave Summary")
+        emp = Employee.from_row(user)
+        balances = emp.get_balances()
+        for b in balances:
+            st.write(f"**{b['leave_type_name']}:** {b['used_days']:.1f} used / {b['total_days']:.1f} total")
 
     with col2:
         st.markdown("### Change Password")

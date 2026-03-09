@@ -45,6 +45,8 @@ def validate_request(employee_id: int, leave_type_id: int,
     working_days = count_working_days(start_str, end_str)
     if is_half_day:
         working_days = 0.5
+        if start_str != end_str:
+            return False, "Half day requests must have the same start and end date."
     
     if working_days <= 0:
         conn.close()

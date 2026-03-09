@@ -9,26 +9,8 @@ from config import CURRENT_YEAR, STATUS_APPROVED, STATUS_REJECTED, STATUS_PENDIN
 class HRAdmin(Person):
 
     def create_user(self, name, email, plain_password, role, department, manager_id=None) -> tuple:
-        from services.auth_service import hash_password
-        conn = get_connection()
-        existing = conn.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
-        if existing:
-            conn.close()
-            return False, "Email already registered."
-        try:
-            cur = conn.execute(
-                """INSERT INTO users (name, email, password, role, department, manager_id)
-                   VALUES (?,?,?,?,?,?)""",
-                (name, email, hash_password(plain_password), role, department, manager_id),
-            )
-            user_id = cur.lastrowid
-            conn.commit()
-            provision_balances_for_user(user_id)
-            conn.close()
-            return True, user_id
-        except Exception as e:
-            conn.close()
-            return False, str(e)
+        from services.auth_service import register_user
+        return register_user(name, email, plain_password, role, department, manager_id)
 
     def deactivate_user(self, user_id: int) -> tuple:
         conn = get_connection()

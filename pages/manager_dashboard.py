@@ -171,8 +171,14 @@ def show(user: dict):
                 rows.append(row)
 
             cal_df = pd.DataFrame(rows, columns=header)
+            
+            def highlight_leave(val):
+                if val == "🌴": return "background-color: #D1FAE5; color: #065F46;"
+                if val == "·": return "background-color: #F3F4F6; color: #9CA3AF;"
+                return ""
+
             st.dataframe(
-                cal_df.set_index("Employee"),
+                cal_df.set_index("Employee").style.applymap(highlight_leave),
                 use_container_width=True,
                 height=min(400, 50 + len(team) * 35),
             )

@@ -71,4 +71,11 @@ def show():
             HR Admin: <code>hr@company.com</code> / <code>admin123</code>
             </div>
             """, unsafe_allow_html=True)
+
+            st.divider()
+            st.write("Don't have an account?")
+            if st.button("Register Now", use_container_width=True):
+                st.session_state["page"] = "register"
+                st.rerun()
+
             st.markdown('</div>', unsafe_allow_html=True)

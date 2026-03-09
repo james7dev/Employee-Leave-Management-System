@@ -109,7 +109,11 @@ def show(user: dict):
             start_date = st.date_input("Start Date", min_value=date.today())
         with col_b:
             is_half    = st.checkbox("Half Day")
-            end_date   = st.date_input("End Date", min_value=date.today())
+            if is_half:
+                end_date = start_date
+                st.info(f"Half Day: End Date set to {end_date}")
+            else:
+                end_date = st.date_input("End Date", min_value=start_date)
 
         reason = st.text_area("Reason (optional)", placeholder="Brief description of your leave reason...")
         
@@ -147,8 +151,21 @@ def show(user: dict):
 
     # ── Tab 3: My Requests ────────────────────────────────────────────────────
     with tab3:
-        st.markdown("### All My Leave Requests")
+        col_t, col_btn = st.columns([3, 1])
+        col_t.markdown("### All My Leave Requests")
+        
         requests = get_employee_requests(emp.id)
+        
+        if requests:
+            df_export = pd.DataFrame(requests)
+            csv = df_export.to_csv(index=False).encode('utf-8')
+            col_btn.download_button(
+                label="📥 Export to CSV",
+                data=csv,
+                file_name=f"leave_history_{user['id']}.csv",
+                mime='text/csv',
+            )
+
         if not requests:
             st.info("No requests found.")
             return
@@ -192,8 +209,9 @@ def show(user: dict):
                         if a["comment"]:
                             st.info(f"💬 {a['comment']}")
 
-                if r["status"] in (STATUS_PENDING_MANAGER, STATUS_PENDING_HR, STATUS_MORE_INFO_REQUIRED):
-                    if st.button("Cancel Request", key=f"cancel_{r['id']}"):
+                if r["status"] in (STATUS_PENDING_MANAGER, STATUS_PENDING_HR, STATUS_MORE_INFO_REQUIRED, STATUS_APPROVED):
+                    cancel_label = "Cancel Request" if r["status"] != STATUS_APPROVED else "Cancel Approved Leave"
+                    if st.button(cancel_label, key=f"cancel_{r['id']}"):
                         ok, msg = emp.cancel_request(r["id"])
                         if ok:
                             st.success(msg)

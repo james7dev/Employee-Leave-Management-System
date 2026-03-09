@@ -2,7 +2,7 @@ import hashlib
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from db.database import get_connection
+from db.database import get_connection, provision_balances_for_user
 
 
 def hash_password(plain: str) -> str:
@@ -53,3 +53,25 @@ def change_password(user_id: int, new_password: str):
     )
     conn.commit()
     conn.close()
+
+
+def register_user(name: str, email: str, password: str, role: str, department: str, manager_id: int = None) -> tuple:
+    conn = get_connection()
+    existing = conn.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
+    if existing:
+        conn.close()
+        return False, "Email already registered."
+    try:
+        cur = conn.execute(
+            """INSERT INTO users (name, email, password, role, department, manager_id)
+               VALUES (?,?,?,?,?,?)""",
+            (name, email, hash_password(password), role, department, manager_id),
+        )
+        user_id = cur.lastrowid
+        conn.commit()
+        provision_balances_for_user(user_id)
+        conn.close()
+        return True, user_id
+    except Exception as e:
+        conn.close()
+        return False, str(e)

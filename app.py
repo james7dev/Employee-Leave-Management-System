@@ -60,11 +60,14 @@ h1, h2, h3 {
 """, unsafe_allow_html=True)
 
 from utils.notifications import get_unread, mark_all_read
-from pages import login, employee_dashboard, manager_dashboard, hr_dashboard, profile
+from pages import login, register, employee_dashboard, manager_dashboard, hr_dashboard, profile
 
 # ── Session guard ─────────────────────────────────────────────────────────────
 if "user" not in st.session_state:
-    login.show()
+    if st.session_state.get("page") == "register":
+        register.show()
+    else:
+        login.show()
     st.stop()
 
 user = st.session_state["user"]
